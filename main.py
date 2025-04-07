@@ -4,6 +4,7 @@ import logging
 from fastapi import FastAPI
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
@@ -23,6 +24,11 @@ class LocationData(BaseModel):
     lat: float
     lon: float
 
+def is_daytime(sunrise, sunset):
+    """Determine if it's currently daytime based on sunrise and sunset times."""
+    current_time = datetime.now().timestamp()
+    return sunrise <= current_time <= sunset
+
 def get_weather_data(lat, lon):
     """Fetch real-time weather data from OpenWeather API."""
     url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={OPENWEATHER_API_KEY}"
@@ -37,6 +43,18 @@ def get_weather_data(lat, lon):
     rain = response.get("rain", {}).get("1h", 0)
     snow = response.get("snow", {}).get("1h", 0)
 
+    # Get sunrise and sunset times
+    sunrise = response.get("sys", {}).get("sunrise", 0)
+    sunset = response.get("sys", {}).get("sunset", 0)
+    
+    # Get location and country
+    location = response.get("name", "Unknown")
+    country = response.get("sys", {}).get("country", "")
+    
+    # Get weather description and main condition
+    weather_description = response.get("weather", [{}])[0].get("description", "Clear sky")
+    weather_main = response.get("weather", [{}])[0].get("main", "Clear")
+
     return {
         "temp": response.get("main", {}).get("temp", 293.15),
         "feels_like": response.get("main", {}).get("feels_like", 293.15),
@@ -45,7 +63,11 @@ def get_weather_data(lat, lon):
         "precipitation": rain + snow,
         "clouds": response.get("clouds", {}).get("all", 20),
         "visibility": response.get("visibility", 10000),
-        "weather_main": response.get("weather", [{}])[0].get("main", "Clear"),
+        "weather_main": weather_main,
+        "description": weather_description,
+        "location": location,
+        "country": country,
+        "is_day": is_daytime(sunrise, sunset)
     }
 
 def get_air_quality(lat, lon):
@@ -137,5 +159,23 @@ def check_weather(location: LocationData):
 
     air_quality_category = classify_air_quality(pollutants)
     classification = classify_weather(weather_data, air_quality_category)
+    
+    # Convert Kelvin to Celsius for temperature values
+    temp_c = weather_data["temp"] - 273.15
+    feels_like_c = weather_data["feels_like"] - 273.15
+    
+    # Add additional fields needed by the WeatherCard component
+    classification.update({
+        "location": weather_data["location"],
+        "country": weather_data["country"],
+        "temp": round(temp_c, 1),
+        "feels_like": round(feels_like_c, 1),
+        "description": weather_data["description"],
+        "main": weather_data["weather_main"],
+        "humidity": weather_data["humidity"],
+        "wind_speed": round(weather_data["wind_speed"] * 3.6, 1),  # Convert m/s to km/h
+        "air_quality": air_quality_category,
+        "is_day": weather_data["is_day"]
+    })
 
     return classification
